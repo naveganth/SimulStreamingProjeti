@@ -1,0 +1,15 @@
+{
+  "name": "crate_whisper_wrapper",
+  "type": "module",
+  "version": "0.1.0",
+  "files": [
+    "crate_whisper_wrapper_bg.wasm",
+    "crate_whisper_wrapper.js",
+    "crate_whisper_wrapper.d.ts"
+  ],
+  "main": "crate_whisper_wrapper.js",
+  "types": "crate_whisper_wrapper.d.ts",
+  "sideEffects": [
+    "./snippets/*"
+  ]
+}
