@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Whisper WASM Stream</title>
+    <style>
+        body {
+            font-family: sans-serif;
+            display: grid;
+            place-items: center;
+            min-height: 90vh;
+            background: #f4f4f4;
+        }
+
+        .container {
+            background: white;
+            padding: 2rem;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+        }
+
+        button {
+            font-size: 1.2rem;
+            padding: 0.5em 1em;
+            margin: 0.5em;
+            cursor: pointer;
+        }
+
+        #status {
+            font-weight: bold;
+        }
+
+        #transcription {
+            margin-top: 1rem;
+            padding: 1rem;
+            background: #eee;
+            border-radius: 4px;
+            min-height: 100px;
+            white-space: pre-wrap;
+        }
+    </style>
+</head>
+
+<body>
+
+    <div class="container">
+        <h1>Teste do Whisper (WASM)</h1>
+        <p>Status: <span id="status">Inativo</span></p>
+        <button id="startButton">Iniciar Gravação</button>
+        <button id="stopButton" disabled>Parar</button>
+        <h2>Transcrição:</h2>
+        <div id="transcription">(aguardando...)</div>
+    </div>
+    <script type="module">
+        // Importa o inicializador e a classe wrapper
+        import init, { WhisperWrapper } from './pkg/crate_whisper_wrapper.js';
+
+        // --- Variáveis de estado ---
+        let audioContext;
+        let stream;
+        let processorNode;
+        let whisperInstance;
+
+        // --- Elementos da UI ---
+        const startButton = document.getElementById('startButton');
+        const stopButton = document.getElementById('stopButton');
+        const statusEl = document.getElementById('status');
+        const transcriptionEl = document.getElementById('transcription');
+
+        // ******************************************************
+        // NOVA FUNÇÃO AUXILIAR: Reamostrador
+        // Converte um Float32Array de uma taxa para 16kHz
+        // ******************************************************
+        function resampleTo16kHz(audioData, inputSampleRate) {
+            const outputSampleRate = 16000;
+            if (inputSampleRate === outputSampleRate) {
+                return audioData;
+            }
+
+            const ratio = inputSampleRate / outputSampleRate;
+            const outputLength = Math.floor(audioData.length / ratio);
+            const result = new Float32Array(outputLength);
+
+            for (let i = 0; i < outputLength; i++) {
+                const inputIndex = i * ratio;
+                const indexLow = Math.floor(inputIndex);
+                const indexHigh = Math.min(indexLow + 1, audioData.length - 1);
+                const weight = inputIndex - indexLow;
+
+                // Interpolação linear simples
+                result[i] = audioData[indexLow] * (1 - weight) + audioData[indexHigh] * weight;
+            }
+            return result;
+        }
+
+
+        // 1. Função Principal: Carrega o WASM
+        async function main() {
+            try {
+                await init('./pkg/crate_whisper_wrapper_bg.wasm');
+
+                // TODO: Instancie sua classe WhisperWrapper aqui.
+                // whisperInstance = new WhisperWrapper(); 
+
+                statusEl.textContent = 'Pronto para iniciar';
+                startButton.disabled = false;
+                console.log('WASM e Wrapper carregados.');
+
+            } catch (err) {
+                console.error('Erro ao carregar o módulo WASM:', err);
+                statusEl.textContent = 'Erro no WASM. Veja o console.';
+            }
+        }
+
+        // 2. Função para Iniciar a Captura de Áudio (MODIFICADA)
+        async function startRecording() {
+            if (audioContext) return;
+
+            try {
+                // --- MUDANÇA AQUI ---
+                // Não pedimos mais 16kHz, deixamos o navegador usar a taxa padrão
+                stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+                // --- MUDANÇA AQUI ---
+                // Não forçamos mais a taxa do contexto, deixamos ele usar a padrão do stream
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+
+                // Informa qual taxa de amostragem estamos realmente usando (ex: 48000)
+                console.log(`Taxa de amostragem nativa: ${audioContext.sampleRate} Hz`);
+
+                // Cria um nó para processar o áudio
+                processorNode = audioContext.createScriptProcessor(4096, 1, 1);
+
+                // --- MUDANÇA AQUI ---
+                // Define a função de callback
+                processorNode.onaudioprocess = (audioProcessingEvent) => {
+                    if (!whisperInstance) {
+                        console.warn("Instância do Whisper não está pronta. Descartando áudio.");
+                        return;
+                    }
+
+                    // Pega os dados do áudio (ex: 48kHz)
+                    const pcmDataOriginal = audioProcessingEvent.inputBuffer.getChannelData(0);
+
+                    // *** AQUI ESTÁ A MÁGICA ***
+                    // Reamostra o áudio para 16kHz
+                    const pcmData16k = resampleTo16kHz(pcmDataOriginal, audioContext.sampleRate);
+
+                    // TODO: Enviar este chunk de áudio (pcmData16k) para o seu WhisperWrapper
+                    // Agora você tem certeza que pcmData16k está a 16kHz.
+                    // Exemplo:
+                    // try {
+                    //    whisperInstance.process_audio_chunk(pcmData16k);
+                    //    const partialText = whisperInstance.get_partial_transcription();
+                    //    transcriptionEl.textContent = partialText;
+                    // } catch (e) {
+                    //    console.error("Erro ao processar chunk:", e);
+                    //    stopRecording(); // Para em caso de erro
+                    // }
+                };
+
+                // Conecta os nós de áudio (Isto agora vai funcionar)
+                const sourceNode = audioContext.createMediaStreamSource(stream);
+                sourceNode.connect(processorNode);
+                processorNode.connect(audioContext.destination);
+
+                // Atualiza UI
+                statusEl.textContent = 'Gravando...';
+                startButton.disabled = true;
+                stopButton.disabled = false;
+                transcriptionEl.textContent = "...";
+
+            } catch (err) {
+                console.error('Erro ao iniciar gravação:', err);
+                statusEl.textContent = 'Erro (sem permissão?)';
+            }
+        }
+
+        // 3. Função para Parar (Sem mudanças)
+        function stopRecording() {
+            if (!audioContext) return;
+            stream.getTracks().forEach(track => track.stop());
+            processorNode.disconnect();
+            audioContext.close();
+            audioContext = null;
+            processorNode = null;
+            stream = null;
+
+            // TODO: Chame a função final do seu wrapper (se houver)
+            // try {
+            //    const finalText = whisperInstance.finish_transcription();
+            //    transcriptionEl.textContent = finalText;
+            // } catch (e) {
+            //    console.error("Erro ao finalizar:", e);
+            // }
+
+            statusEl.textContent = 'Inativo';
+            startButton.disabled = false;
+            stopButton.disabled = true;
+        }
+
+        // --- Configura os Event Listeners ---
+        startButton.addEventListener('click', startRecording);
+        stopButton.addEventListener('click', stopRecording);
+        startButton.disabled = true;
+
+        main();
+    </script>
+</body>
+
+</html>
